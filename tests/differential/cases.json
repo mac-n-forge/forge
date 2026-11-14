@@ -209,5 +209,47 @@
   {
     "fixture_id": "runner/exit_and_stderr",
     "blocked_reason": "The function harness cannot return a full-width Windows termination status."
+  },
+  {
+    "fixture_id": "memory/roundtrip",
+    "scope": "function",
+    "export": "stack_roundtrip",
+    "signature": "i64(i64,i64)",
+    "harness": "decimal_pairs"
+  },
+  {
+    "fixture_id": "memory/widths",
+    "scope": "function",
+    "export": "stack_widths",
+    "signature": "i64(i64,i64)",
+    "harness": "decimal_pairs"
+  },
+  {
+    "fixture_id": "memory/overlap",
+    "scope": "function",
+    "export": "stack_overlap",
+    "signature": "i64(i64,i64)",
+    "harness": "decimal_pairs"
+  },
+  {
+    "fixture_id": "memory/indexed",
+    "scope": "function",
+    "export": "stack_indexed",
+    "signature": "i64(i64,i64)",
+    "harness": "decimal_pairs"
+  },
+  {
+    "fixture_id": "memory/branch",
+    "scope": "function",
+    "export": "stack_branch",
+    "signature": "i64(i64,i64)",
+    "harness": "decimal_pairs"
+  },
+  {
+    "fixture_id": "memory/loop",
+    "scope": "function",
+    "export": "stack_loop",
+    "signature": "i64(i64,i64)",
+    "harness": "decimal_pairs"
   }
 ]

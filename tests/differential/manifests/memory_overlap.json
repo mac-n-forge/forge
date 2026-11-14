@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "memory/overlap",
+  "description": "Overwrite the middle of an unaligned quadword and read an overlapping doubleword and byte.",
+  "source": "fixtures/arithmetic/integer_driver.c",
+  "binary": "stack_overlap.exe",
+  "args": [
+    "0",
+    "0",
+    "1",
+    "-1",
+    "-128",
+    "32768",
+    "32769",
+    "-2147483648",
+    "-3",
+    "4294967295",
+    "7",
+    "987654321",
+    "4294967296",
+    "-9"
+  ],
+  "expected": {
+    "exit_code": 0,
+    "stdout": "0\n16776961\n4286579071\n129\n4294967548\n6861063\n33552128\n",
+    "stderr": ""
+  }
+}

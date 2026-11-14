@@ -5,6 +5,7 @@
 #include "lift/asm_info.h"
 #include "lift/cfg.h"
 #include "lift/integer.h"
+#include "lift/stack.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
@@ -24,6 +25,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <string_view>
 
 namespace forge {
     namespace {
@@ -35,15 +37,24 @@ namespace forge {
 
         using x86::Step;
 
-        constexpr std::array<StringLiteral, 7> wideRegs{"RAX", "RCX", "RDX", "R8",
-                                                        "R9",  "R10", "R11"};
-        constexpr std::array<StringLiteral, 7> lowRegs{"EAX", "ECX",  "EDX", "R8D",
-                                                       "R9D", "R10D", "R11D"};
-        constexpr std::array<StringLiteral, 7> words{"AX",  "CX",   "DX",  "R8W",
-                                                     "R9W", "R10W", "R11W"};
-        constexpr std::array<StringLiteral, 7> lowBytes{"AL",  "CL",   "DL",  "R8B",
-                                                        "R9B", "R10B", "R11B"};
-        constexpr std::array<StringLiteral, 3> highBytes{"AH", "CH", "DH"};
+        struct RegisterNames {
+            StringLiteral wide, dword, word, lowByte, highByte;
+        };
+
+        // The first seven rows are the register-state ABI, in wire order.
+        constexpr RegisterNames registerNames[] = {
+            {"RAX", "EAX", "AX", "AL", "AH"},    {"RCX", "ECX", "CX", "CL", "CH"},
+            {"RDX", "EDX", "DX", "DL", "DH"},    {"R8", "R8D", "R8W", "R8B", ""},
+            {"R9", "R9D", "R9W", "R9B", ""},     {"R10", "R10D", "R10W", "R10B", ""},
+            {"R11", "R11D", "R11W", "R11B", ""}, {"RSP", "ESP", "SP", "SPL", ""},
+            {"RBP", "EBP", "BP", "BPL", ""},     {"RBX", "EBX", "BX", "BL", "BH"},
+            {"RSI", "ESI", "SI", "SIL", ""},     {"RDI", "EDI", "DI", "DIL", ""},
+            {"R12", "R12D", "R12W", "R12B", ""}, {"R13", "R13D", "R13W", "R13B", ""},
+            {"R14", "R14D", "R14W", "R14B", ""}, {"R15", "R15D", "R15W", "R15B", ""}};
+        constexpr unsigned callerSlots = 7;
+        constexpr unsigned rspIndex = callerSlots;
+        static_assert(std::string_view(registerNames[rspIndex].wide) == "RSP");
+
         // The signatureless ABI accepts a four-byte-aligned register array.
         constexpr auto registerStateAlignment = Align::Constant<4>();
 
@@ -55,7 +66,7 @@ namespace forge {
             uint64_t mask() const { return maskTrailingOnes<uint64_t>(width) << offset; }
         };
 
-        using Defined = std::array<uint64_t, wideRegs.size()>;
+        using Defined = std::array<uint64_t, std::size(registerNames)>;
 
         struct Availability {
             Defined registers{};
@@ -77,6 +88,7 @@ namespace forge {
             x86::FlagEffect flags{{}, x86::FlagSet().set()};
             Availability incoming;
             BasicBlock *irBlock = nullptr;
+            BasicBlock *exitBlock = nullptr;
             std::array<PHINode *, x86::FlagCount> phis{};
             x86::Flags outgoing{};
             bool queued = false;
@@ -109,8 +121,12 @@ namespace forge {
 
             auto &entry = states.begin()->second.incoming;
             entry.flags.reset();
-            if (mode == EntryMode::WindowsX64I64Pair) {
-                entry.registers.fill(0);
+            entry.registers.fill(0);
+            entry.registers[rspIndex] = UINT64_MAX;
+
+            if (mode == EntryMode::RegisterState) {
+                std::fill_n(entry.registers.begin(), callerSlots, UINT64_MAX);
+            } else {
                 entry.registers[1] = entry.registers[2] = UINT64_MAX;
             }
 
@@ -148,13 +164,13 @@ namespace forge {
           public:
             Translator(llvm::Module &module, uint32_t rva, EntryMode mode,
                        const MCRegisterInfo &regs)
-                : ir(module.getContext()), semantics(ir), regs(regs), mode(mode) {
+                : ir(module.getContext()), semantics(ir), stack(ir), regs(regs), mode(mode) {
                 auto *type = FunctionType::get(ir.getVoidTy(), ir.getPtrTy(), false);
                 impl = Function::Create(type, Function::InternalLinkage,
                                         "forge_lifted_" + utohexstr(rva, true), module);
                 impl->getArg(0)->setName("state");
                 appendToUsed(module, {impl});
-                stateType = ArrayType::get(ir.getInt64Ty(), wideRegs.size());
+                auto *stateType = ArrayType::get(ir.getInt64Ty(), callerSlots);
 
                 if (mode == EntryMode::WindowsX64I64Pair) {
                     auto *nativeType = FunctionType::get(ir.getInt64Ty(),
@@ -178,14 +194,22 @@ namespace forge {
           private:
             IRBuilder<> ir;
             x86::IntegerSemantics semantics;
+            x86::GuestStack stack;
             const MCRegisterInfo &regs;
             EntryMode mode;
             Function *impl;
-            ArrayType *stateType;
+            Value *localRegisters = nullptr;
+            bool accessesMemory = false;
+            bool writesRsp = false;
             Defined defined{};
 
             Value *slot(Value *state, unsigned index) {
-                return ir.CreateInBoundsGEP(stateType, state, {ir.getInt32(0), ir.getInt32(index)});
+                if (index >= callerSlots) {
+                    return ir.CreateInBoundsGEP(ir.getInt64Ty(), localRegisters,
+                                                ir.getInt32(index - callerSlots));
+                }
+
+                return ir.CreateInBoundsGEP(ir.getInt64Ty(), state, ir.getInt32(index));
             }
 
             RegisterView reg(const Step &s, const MCOperand &operand, unsigned width) const;
@@ -196,11 +220,11 @@ namespace forge {
             Value *condition(const Step &s);
             void integer(const Step &s, const x86::IntegerInstruction &instruction);
             void lower(const Step &s);
-            void lea(const Step &s, RegisterView dest);
+            Value *effectiveAddress(const Step &s, unsigned first, bool memory);
             RegisterView destination(const Step &s,
                                      const x86::IntegerInstruction &instruction) const;
             std::optional<RegisterView> resultRegister(const Step &s) const;
-            void summarize(const Step &s, BlockState &state) const;
+            void summarize(const Step &s, BlockState &state);
             void emitBlock(const x86::GuestBlock &block, const BlockStates &states);
         };
 
@@ -210,20 +234,17 @@ namespace forge {
             }
 
             auto name = StringRef(regs.getName(op.getReg()));
-            const auto &names = width == 64   ? wideRegs
-                                : width == 32 ? lowRegs
-                                : width == 16 ? words
-                                              : lowBytes;
-            auto it = llvm::find(names, name);
-            if (it != names.end()) {
-                return {static_cast<unsigned>(it - names.begin()), width};
-            }
 
-            if (width == 8) {
-                auto high = llvm::find(highBytes, name);
+            for (unsigned index = 0; index < std::size(registerNames); ++index) {
+                const auto &names = registerNames[index];
 
-                if (high != highBytes.end()) {
-                    return {static_cast<unsigned>(high - highBytes.begin()), 8, 8};
+                if ((width == 64 && names.wide == name) || (width == 32 && names.dword == name) ||
+                    (width == 16 && names.word == name) || (width == 8 && names.lowByte == name)) {
+                    return {index, width};
+                }
+
+                if (width == 8 && names.highByte == name) {
+                    return {index, width, 8};
                 }
             }
 
@@ -233,7 +254,7 @@ namespace forge {
         Value *Translator::read(const Step &s, RegisterView view) {
             if ((defined[view.index] & view.mask()) != view.mask()) {
                 s.reject(FailureCode::UndefinedRegister,
-                         "native wrapper requires undefined incoming " + wideRegs[view.index]);
+                         "read of undefined incoming " + registerNames[view.index].wide);
             }
 
             Value *v = ir.CreateAlignedLoad(ir.getInt64Ty(), slot(impl->getArg(0), view.index),
@@ -287,29 +308,38 @@ namespace forge {
                                        [&](x86::Flag f) { return require(s, f); });
         }
 
-        void Translator::lea(const Step &s, RegisterView dest) {
-            const auto &i = s.inst;
+        Value *Translator::effectiveAddress(const Step &s, unsigned first, bool memory) {
+            const auto &inst = s.inst;
+            const auto &base = inst.getOperand(first);
+            const auto scale = inst.getOperand(first + 1).getImm();
+            const auto &index = inst.getOperand(first + 2);
+            const auto displacement = inst.getOperand(first + 3).getImm();
+            const auto segment = inst.getOperand(first + 4).getReg();
+            const bool hasIndex =
+                index.getReg() && StringRef(regs.getName(index.getReg())) != "RIZ";
 
-            if (i.getOperand(5).getReg() != 0) {
-                s.reject(FailureCode::UnsupportedInstruction, "segment-relative LEA");
+            if (segment || (scale != 1 && scale != 2 && scale != 4 && scale != 8)) {
+                s.reject(FailureCode::UnsupportedInstruction,
+                         "unsupported segment or address scale");
             }
 
-            Value *result = ConstantInt::getSigned(ir.getInt64Ty(), i.getOperand(4).getImm());
-            for (unsigned pos : {1U, 3U}) {
-                if (!i.getOperand(pos).getReg()) {
-                    continue;
-                }
-
-                Value *term = value(s, i.getOperand(pos), 64);
-                if (pos == 3) {
-                    term = ir.CreateMul(
-                        term, ConstantInt::getSigned(ir.getInt64Ty(), i.getOperand(2).getImm()));
-                }
-
-                result = ir.CreateAdd(result, term);
+            if (memory && !base.getReg() && !hasIndex) {
+                s.reject(FailureCode::UnsupportedInstruction, "absolute memory operand");
             }
 
-            write(dest, ir.CreateTruncOrBitCast(result, ir.getIntNTy(dest.width)));
+            Value *address = ir.getInt64(static_cast<uint64_t>(displacement));
+
+            if (base.getReg()) {
+                address = ir.CreateAdd(address, read(s, reg(s, base, 64)));
+            }
+
+            if (hasIndex) {
+                auto *term = read(s, reg(s, index, 64));
+                address = ir.CreateAdd(
+                    address, ir.CreateMul(term, ir.getInt64(static_cast<uint64_t>(scale))));
+            }
+
+            return address;
         }
 
         RegisterView Translator::destination(const Step &s,
@@ -342,13 +372,20 @@ namespace forge {
             return reg(s, s.inst.getOperand(0), width);
         }
 
-        void Translator::summarize(const Step &s, BlockState &state) const {
+        void Translator::summarize(const Step &s, BlockState &state) {
             RegisterView dest{};
             if (auto instruction = x86::integerInstruction(s.opcode)) {
+                if (instruction->form == x86::Form::Store) {
+                    accessesMemory = true;
+                    return;
+                }
+
+                accessesMemory |= instruction->form == x86::Form::Load;
                 auto effect = x86::flagEffect(instruction->op, instruction->width,
                                               shiftCount(s, instruction->form));
                 state.flags.generated = effect.apply(state.flags.generated);
                 state.flags.carried &= effect.carried;
+
                 if (instruction->op == x86::Op::Cmp || instruction->op == x86::Op::Test) {
                     return;
                 }
@@ -361,6 +398,7 @@ namespace forge {
             }
 
             state.writes[dest.index] |= dest.writeMask();
+            writesRsp |= dest.index == rspIndex;
         }
 
         void Translator::integer(const Step &s, const x86::IntegerInstruction &instruction) {
@@ -368,12 +406,21 @@ namespace forge {
             using x86::Op;
             auto [op, form, width, sourceWidth] = instruction;
             const auto &i = s.inst;
-            auto dest = destination(s, instruction);
             const auto &last = i.getOperand(i.getNumOperands() - 1);
 
-            if (op == Op::Mov || form == Form::Extend) {
-                write(dest, ir.CreateIntCast(value(s, last, sourceWidth), ir.getIntNTy(width),
-                                             op == Op::Movsx));
+            if (form == Form::Store) {
+                auto *address = effectiveAddress(s, 0, true);
+                stack.store(address, value(s, last, width));
+                return;
+            }
+
+            auto dest = destination(s, instruction);
+
+            if (op == Op::Mov || op == Op::Movsx || op == Op::Movzx) {
+                auto *source = form == Form::Load
+                                   ? stack.load(effectiveAddress(s, 1, true), sourceWidth)
+                                   : value(s, last, sourceWidth);
+                write(dest, ir.CreateIntCast(source, ir.getIntNTy(width), op == Op::Movsx));
 
                 return;
             }
@@ -421,7 +468,8 @@ namespace forge {
 
             const auto dest = *result;
             if (s.opcode == "LEA64r" || s.opcode == "LEA64_32r") {
-                lea(s, dest);
+                write(dest, ir.CreateTruncOrBitCast(effectiveAddress(s, 1, false),
+                                                    ir.getIntNTy(dest.width)));
             } else if (s.opcode == "SETCCr") {
                 write(dest, ir.CreateZExt(condition(s), ir.getInt8Ty()));
             } else if (s.opcode == "CMOV16rr" || s.opcode == "CMOV32rr" || s.opcode == "CMOV64rr") {
@@ -464,6 +512,10 @@ namespace forge {
                     last.reject(FailureCode::UndefinedRegister, "return with undefined RAX");
                 }
 
+                if (writesRsp) {
+                    stack.checkReturn(read(last, {rspIndex, 64}));
+                }
+
                 ir.CreateRetVoid();
                 break;
             case x86::Flow::Conditional:
@@ -489,7 +541,7 @@ namespace forge {
                         if (phis[f]) {
                             assert(source.outgoing[f] &&
                                    "availability disagrees with flag lowering");
-                            phis[f]->addIncoming(source.outgoing[f], source.irBlock);
+                            phis[f]->addIncoming(source.outgoing[f], source.exitBlock);
                         }
                     }
                 }
@@ -515,6 +567,16 @@ namespace forge {
 
             proveAvailability(graph, states, mode);
             ir.SetInsertPoint(entry);
+            auto *locals = ArrayType::get(ir.getInt64Ty(), std::size(registerNames) - callerSlots);
+            localRegisters = ir.CreateAlloca(locals, nullptr, "local.registers");
+            ir.CreateStore(ConstantAggregateZero::get(locals), localRegisters);
+            ir.CreateAlignedStore(ir.getInt64(x86::GuestStack::entryRsp),
+                                  slot(impl->getArg(0), rspIndex), registerStateAlignment);
+
+            if (accessesMemory) {
+                stack.allocate();
+            }
+
             ir.CreateBr(states.begin()->second.irBlock);
             for (const auto &[addr, block] : graph) {
                 auto &state = states.at(addr);
@@ -535,6 +597,7 @@ namespace forge {
                     throw;
                 }
 
+                state.exitBlock = ir.GetInsertBlock();
                 state.outgoing = semantics.flags;
             }
 

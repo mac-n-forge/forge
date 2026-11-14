@@ -37,6 +37,8 @@ namespace forge::x86 {
         Immediate,
         Accumulator,
         Extend,
+        Load,
+        Store,
         ShiftOne,
         ShiftImmediate,
         ShiftCL

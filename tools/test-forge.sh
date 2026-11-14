@@ -57,7 +57,7 @@ native_tests() (
 import sys
 from xml.etree import ElementTree
 tests = ElementTree.parse(sys.argv[1]).findall(".//testcase")
-for name in ("native", "differential", "build_provisioning"):
+for name in ("native", "differential", "guest_stack", "build_provisioning"):
     found = [t for t in tests if t.get("name") == name]
     if len(found) != 1 or found[0].get("status") != "run" or len(found[0].findall("skipped")):
         sys.exit(f"Required CTest {name} did not execute. Activate the documented build-tools environment before running the native gate.")

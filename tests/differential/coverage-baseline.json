@@ -290,6 +290,66 @@
       "id": "control_flow/partial_join",
       "config": "release",
       "target": "macos-arm64"
+    },
+    {
+      "id": "memory/roundtrip",
+      "config": "debug",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "memory/roundtrip",
+      "config": "release",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "memory/widths",
+      "config": "debug",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "memory/widths",
+      "config": "release",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "memory/overlap",
+      "config": "debug",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "memory/overlap",
+      "config": "release",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "memory/indexed",
+      "config": "debug",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "memory/indexed",
+      "config": "release",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "memory/branch",
+      "config": "debug",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "memory/branch",
+      "config": "release",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "memory/loop",
+      "config": "debug",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "memory/loop",
+      "config": "release",
+      "target": "macos-arm64"
     }
   ]
 }

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "memory/loop",
+  "description": "Accumulate the decreasing loop counter into a stack-resident seed.",
+  "source": "fixtures/arithmetic/integer_driver.c",
+  "binary": "stack_loop.exe",
+  "args": [
+    "0",
+    "0",
+    "1",
+    "-1",
+    "-128",
+    "32768",
+    "32769",
+    "-2147483648",
+    "-3",
+    "4294967295",
+    "7",
+    "987654321",
+    "4294967296",
+    "-9"
+  ],
+  "expected": {
+    "exit_code": 0,
+    "stdout": "0\n0\n32768\n-2147483647\n4294967310\n987654349\n-9\n",
+    "stderr": ""
+  }
+}

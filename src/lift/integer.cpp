@@ -5,6 +5,55 @@
 namespace forge::x86 {
     using namespace llvm;
 
+    namespace {
+        std::optional<IntegerInstruction> moveInstruction(Op op, unsigned width, StringRef suffix) {
+            // MOVSXD without REX.W can copy a doubleword into a 32-bit destination.
+            if (op == Op::Movsx && width == 32 && suffix == "rm32") {
+                return IntegerInstruction{op, Form::Load, 32, 32};
+            }
+
+            if (op != Op::Mov) {
+                Form form;
+
+                if (suffix.consume_front("rm")) {
+                    form = Form::Load;
+                } else if (suffix.consume_front("rr")) {
+                    form = Form::Extend;
+                } else {
+                    return std::nullopt;
+                }
+
+                unsigned sourceWidth = 0;
+
+                if (suffix.getAsInteger(10, sourceWidth) || sourceWidth >= width ||
+                    !(sourceWidth == 8 || sourceWidth == 16 ||
+                      (op == Op::Movsx && sourceWidth == 32))) {
+                    return std::nullopt;
+                }
+
+                return IntegerInstruction{op, form, width, sourceWidth};
+            }
+
+            Form form;
+
+            if (suffix == "rm") {
+                form = Form::Load;
+            } else if (suffix == "mr" || (width < 64 && suffix == "mi") ||
+                       (width == 64 && suffix == "mi32")) {
+                form = Form::Store;
+            } else if (suffix == "rr" || suffix == "rr_REV") {
+                form = Form::Pair;
+            } else if (suffix == "ri" || suffix == "ri_alt" || suffix == "ri32" ||
+                       suffix == "ri8") {
+                form = Form::Immediate;
+            } else {
+                return std::nullopt;
+            }
+
+            return IntegerInstruction{op, form, width, width};
+        }
+    } // namespace
+
     std::optional<IntegerInstruction> integerInstruction(StringRef opcode) {
         auto name = opcode.take_while([](char c) { return c >= 'A' && c <= 'Z'; });
         auto operation = StringSwitch<std::optional<Op>>(name)
@@ -43,20 +92,15 @@ namespace forge::x86 {
             return std::nullopt;
         }
 
-        auto op = *operation;
+        const auto op = *operation;
+
+        if (op == Op::Mov || op == Op::Movzx || op == Op::Movsx) {
+            return moveInstruction(op, width, suffix);
+        }
+
         Form form;
-        unsigned sourceWidth = width;
 
-        if (op == Op::Movzx || op == Op::Movsx) {
-            if (!suffix.consume_front("rr") || suffix.getAsInteger(10, sourceWidth) ||
-                sourceWidth >= width ||
-                !(sourceWidth == 8 || sourceWidth == 16 ||
-                  (op == Op::Movsx && sourceWidth == 32))) {
-
-                return std::nullopt;
-            }
-            form = Form::Extend;
-        } else if (op == Op::Shl || op == Op::Shr || op == Op::Sar) {
+        if (op == Op::Shl || op == Op::Shr || op == Op::Sar) {
             if (suffix == "r1") {
                 form = Form::ShiftOne;
             } else if (suffix == "ri") {
@@ -74,17 +118,15 @@ namespace forge::x86 {
             form = Form::Reg;
         } else if (suffix == "rr" || suffix == "rr_REV") {
             form = Form::Pair;
-        } else if (op != Op::Imul && (suffix == "ri" || suffix == "ri8" || suffix == "ri32" ||
-                                      (op == Op::Mov && suffix == "ri_alt"))) {
+        } else if (op != Op::Imul && (suffix == "ri" || suffix == "ri8" || suffix == "ri32")) {
             form = Form::Immediate;
-        } else if (op != Op::Imul && op != Op::Mov &&
-                   (suffix == "i8" || suffix == "i16" || suffix == "i32")) {
+        } else if (op != Op::Imul && (suffix == "i8" || suffix == "i16" || suffix == "i32")) {
             form = Form::Accumulator;
         } else {
             return std::nullopt;
         }
 
-        return IntegerInstruction{op, form, width, sourceWidth};
+        return IntegerInstruction{op, form, width, width};
     }
 
     FlagEffect flagEffect(Op op, unsigned width, std::optional<unsigned> count) {

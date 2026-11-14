@@ -366,8 +366,8 @@ class Lift(Case):
         output = self.dir/"existing.ll"
         output.write_text("sentinel")
         for code, expected in [
-                ("88 c8 c3", "undefined RAX"), ("66 89 c8 c3", "undefined RAX"), ("48 8b 01 c3", "operand form"),
-                ("48 89 e0 c3", "RSP"), ("48 8d 05 00 00 00 00", "RIP"),
+                ("88 c8 c3", "undefined RAX"), ("66 89 c8 c3", "undefined RAX"), ("48 03 01 c3", "operand form"),
+                ("48 8b 45 00 c3", "undefined incoming RBP"), ("48 8d 05 00 00 00 00", "RIP"),
                 ("f3 c3", "prefix"), ("48 48 89 c8 c3", "prefix"),
                 ("ff d0 c3", "unsupported"), ("ff e0", "unsupported"),
                 ("b8 01 00 00 00 31 c0", "outside"), ("eb 05", "outside"), ("74 01 48 89 c8 c3", "enters an instruction"),
@@ -437,6 +437,21 @@ class Lift(Case):
                      "39 d1 74 00 0f 94 c0 0f b6 c0 c3"):
             with self.subTest(code=code):
                 lift(code)
+
+        # The RIZ spelling in a SIB with a redundant scale has no index.
+        lift("48 89 4c 64 08 48 8b 44 64 08 c3")
+        lift("48 89 e0 c3")
+        for code, failure in (
+                ("67 48 8b 01 c3", "LIFT_UNSUPPORTED_PREFIX"),
+                ("65 48 8b 01 c3", "LIFT_UNSUPPORTED_PREFIX"),
+                ("48 8b 05 00 00 00 00 c3", "LIFT_UNSUPPORTED_REGISTER"),
+                ("48 8b 04 25 08 00 00 00 c3", "LIFT_UNSUPPORTED_INSTRUCTION"),
+                ("48 a1 00 00 00 70 00 00 00 00 c3", "LIFT_UNSUPPORTED_INSTRUCTION"),
+                ("48 8b 04 9c c3", "LIFT_UNDEFINED_REGISTER"),
+                ("b7 ff 48 8b 03 c3", "LIFT_UNDEFINED_REGISTER"),
+                ("41 b5 01 4c 89 e8 c3", "LIFT_UNDEFINED_REGISTER")):
+            with self.subTest(code=code):
+                lift(code, failure)
 
         # LEA defines R8. MOVSX defines AX and MOVZX supplies the full RAX for ADC.
         lift("39 d1 4c 8d 04 11 eb 00 66 0f be c2 eb 00 0f b7 c0 4c 11 c0 c3")
