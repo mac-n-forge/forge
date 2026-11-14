@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "memory/indexed",
+  "description": "Select one of four fixed shadow-space doublewords with an indexed MOVSXD load into EAX.",
+  "source": "fixtures/arithmetic/integer_driver.c",
+  "binary": "stack_indexed.exe",
+  "args": [
+    "0",
+    "305419896",
+    "1",
+    "305419896",
+    "2",
+    "305419896",
+    "3",
+    "305419896",
+    "-2",
+    "-1",
+    "6",
+    "4294967296"
+  ],
+  "expected": {
+    "exit_code": 0,
+    "stdout": "287454020\n2147483649\n305419896\n4275878552\n4294967295\n0\n",
+    "stderr": ""
+  }
+}

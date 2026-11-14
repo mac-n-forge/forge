@@ -182,10 +182,12 @@ class BuildConfig(BuildCase):
         entries = json.loads(contents)
         harness = SOURCE / "tests/support/native_harness.cpp"
         self.assertIn(str(harness), [e["file"] for e in entries])
+        self.assertIn(str(SOURCE / "tests/support/register_state.cpp"), [e["file"] for e in entries])
         self.assertIn(str(SOURCE / "tests/unit/integer.cpp"), [e["file"] for e in entries])
         self.invoke(CMAKE, "--build", build, "--parallel", "4")
         self.assertTrue((build / "forge").is_file())
         self.assertFalse((build / "tests/integer_semantics").exists())
+        self.assertFalse(list(build.rglob("register_state.cpp.o")))
         if read_cache(build)["FORGE_CONAN_PRESET"] == "sanitize":
             parsing = next(e for e in entries if e["file"] == str(SOURCE / "src/cli/parsing.cpp"))
             self.assertIn("-fsanitize=address,undefined", parsing["command"])

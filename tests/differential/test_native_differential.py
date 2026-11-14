@@ -105,6 +105,18 @@ class NativeDifferentialTests(unittest.TestCase):
             mismatch, = evidence["differences"]
             self.assertEqual(mismatch["operands"], ["1", "4294967295"])
 
+    def test_stack_index_scale(self):
+        def use_byte_stride(source):
+            changed, count = re.subn(r"(\bmul i64 %\w+, )4\b", r"\g<1>1", source)
+            self.assertEqual(count, 1, "expected one four-byte index scale")
+            return changed
+
+        report = self.modified_ir("memory/indexed", "byte-stride", "stdout_mismatch", use_byte_stride)
+        for variant in diff.VARIANTS:
+            evidence = report["variants"][variant]
+            self.assertEqual(evidence["stages"]["native_execution"], "passed")
+            self.assertEqual(evidence["failure_categories"], ["stdout_mismatch"])
+
     def test_word_sign_extension(self):
         def zero_extend(source):
             changed, count = re.subn(r"\bsext i16 (%\w+) to i64\b", r"zext i16 \1 to i64", source)

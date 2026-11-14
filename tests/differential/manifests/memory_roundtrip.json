@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "memory/roundtrip",
+  "description": "Subtract two quadwords loaded from independent shadow-space slots.",
+  "source": "fixtures/arithmetic/integer_driver.c",
+  "binary": "stack_roundtrip.exe",
+  "args": [
+    "0",
+    "0",
+    "1",
+    "-1",
+    "-128",
+    "32768",
+    "32769",
+    "-2147483648",
+    "-3",
+    "4294967295",
+    "7",
+    "987654321",
+    "4294967296",
+    "-9"
+  ],
+  "expected": {
+    "exit_code": 0,
+    "stdout": "0\n2\n-32896\n2147516417\n-4294967298\n-987654314\n4294967305\n",
+    "stderr": ""
+  }
+}

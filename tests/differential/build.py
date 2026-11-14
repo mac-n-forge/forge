@@ -69,6 +69,16 @@ INTEGER_WITNESSES = {
     "shift_widths": ("shr ax,cl", "shl dh,cl", "shr rdx,cl"),
     "shift_one": ("shl dl,1", "seto al", "setb ah", "shr cx,1"),
     "joined_flags": ("cmp rcx,rdx", "jbe ", "sub rdx,rcx", "jmp ", "add rdx,rcx", "lahf"),
+    "stack_roundtrip": ("mov QWORD PTR [rsp+0x8],rcx", "mov rax,QWORD PTR [rsp+0x8]"),
+    "stack_widths": ("mov QWORD PTR [rsp+0x8],", "movsx r10,BYTE PTR", "movsx r8,WORD PTR",
+                     "movsxd rdx,DWORD PTR", "mov eax,DWORD PTR"),
+    "stack_overlap": ("mov QWORD PTR [rsp+0x9],rcx", "mov WORD PTR [rsp+0xb],dx", "mov eax,DWORD PTR [rsp+0xa]"),
+    "stack_indexed": ("mov DWORD PTR [rsp+0x8],0x11223344", "mov DWORD PTR [rsp+0xc],0x80000001",
+                      "mov DWORD PTR [rsp+0x10],edx", "mov DWORD PTR [rsp+0x14],0xfedcba98",
+                      "lea rbp,[rsp+0x18]", "and ecx,0x3", "mov rax,0xffffffffffffffff",
+                      "movsxd eax,DWORD PTR [rbp+rcx*4-0x10]"),
+    "stack_branch": ("jg ", "mov QWORD PTR [rsp+0x8],rdx", "jmp ", "mov QWORD PTR [rsp+0x8],rcx", "adc rax,r10"),
+    "stack_loop": ("mov rax,QWORD PTR [rsp+0x10]", "mov QWORD PTR [rsp+0x10],rax", "jne ", "mov rax,QWORD PTR [rsp+0x10]"),
     "integer_mix": ("shl ", "xor ", "imul "),
 }
 

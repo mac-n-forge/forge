@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "memory/widths",
+  "description": "Combine narrow signed and unsigned loads with a partial immediate-initialized store.",
+  "source": "fixtures/arithmetic/integer_driver.c",
+  "binary": "stack_widths.exe",
+  "args": [
+    "0",
+    "0",
+    "1",
+    "-1",
+    "-128",
+    "32768",
+    "32769",
+    "-2147483648",
+    "-3",
+    "4294967295",
+    "7",
+    "987654321",
+    "4294967296",
+    "-9"
+  ],
+  "expected": {
+    "exit_code": 0,
+    "stdout": "-256\n4294967295\n65024\n-33022\n4294967287\n1975308577\n4294967269\n",
+    "stderr": ""
+  }
+}

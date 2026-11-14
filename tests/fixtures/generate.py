@@ -66,6 +66,7 @@ def generate(output, mc, link, dlltool, clang):
             (output / f"{name}.exe").write_bytes((work / f"{name}.exe").read_bytes())
         cfg_leaves = sources.parent / "differential/fixtures/control_flow/cfg_cases.S"
         image("cfg.exe", (sources / "cfg.s").read_text() + cfg_leaves.read_text())
+        image("stack.exe", (sources / "stack.s").read_text())
         image("chained.exe", (sources / "chained.s").read_text())
         image("unicode.exe", stub + '.section ".donnée","dr"\n.byte 1\n.section ".界区","dr"\n.byte 1\n')
         image("arithmetic.exe", (sources / "arithmetic.s").read_text(),

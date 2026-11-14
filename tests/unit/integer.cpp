@@ -97,6 +97,42 @@ namespace {
         }
     }
 
+    void checkMemoryForms() {
+        struct Case {
+            StringLiteral opcode;
+            Form form;
+            unsigned width, sourceWidth;
+        };
+
+        constexpr Case cases[] = {
+            {"MOV8mr", Form::Store, 8, 8},       {"MOV16mi", Form::Store, 16, 16},
+            {"MOV32rm", Form::Load, 32, 32},     {"MOV64mi32", Form::Store, 64, 64},
+            {"MOVZX16rm8", Form::Load, 16, 8},   {"MOVSX64rm16", Form::Load, 64, 16},
+            {"MOVSX64rm32", Form::Load, 64, 32}, {"MOVSX32rm32", Form::Load, 32, 32}};
+
+        for (const auto &sample : cases) {
+            const auto inst = integerInstruction(sample.opcode);
+
+            if (!inst || inst->form != sample.form || inst->width != sample.width ||
+                inst->sourceWidth != sample.sourceWidth) {
+                throw std::runtime_error("incorrect memory form " + sample.opcode.str());
+            }
+
+            const auto effect = flagEffect(inst->op, inst->width);
+
+            if (effect.generated.any() || !effect.carried.all()) {
+                throw std::runtime_error("move affected condition flags " + sample.opcode.str());
+            }
+        }
+
+        for (StringRef opcode :
+             {"ADD64rm", "MOVZX64rm32", "MOVSX16rm16", "MOVSX16rm32", "MOV64mi", "MOV8ao64"}) {
+            if (integerInstruction(opcode)) {
+                throw std::runtime_error("accepted unsupported form " + opcode.str());
+            }
+        }
+    }
+
     void checkEffects() {
         LLVMContext context;
         Module module("availability", context);
@@ -187,6 +223,7 @@ int main() {
     try {
         check();
         checkEffects();
+        checkMemoryForms();
     } catch (const std::exception &error) {
         errs() << "integer semantics: " << error.what() << '\n';
         return 1;

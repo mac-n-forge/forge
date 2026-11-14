@@ -1,6 +1,6 @@
 # Forge
 
-Forge inspects Windows PE32+ AMD64 executables and DLLs on macOS. It reports the image layout, imported and exported symbols, base relocations, TLS, AMD64 exception metadata, and the static dependency graph. Function analysis identifies unwind-backed code ranges. The experimental lifter translates individual register-only functions into LLVM IR for native ARM64 compilation. Inspection and lifting both read the PE as a file.
+Forge inspects Windows PE32+ AMD64 executables and DLLs on macOS. It reports the image layout, imported and exported symbols, base relocations, TLS, AMD64 exception metadata, and the static dependency graph. Function analysis identifies unwind-backed code ranges. The experimental lifter translates individual integer functions with bounded stack memory into LLVM IR for native ARM64 compilation. Inspection and lifting both read the PE as a file.
 
 ## Repository layout
 
@@ -217,13 +217,13 @@ printf 'a 14\nffffffffffffffff 1\n' | build/dev/add-harness
 
 The object reports `Mach-O arm64`. The harness prints `1e` and `0` for 10 + 20 and −1 + 1. It accepts empty input and reports failure for an incomplete pair or an input or output error.
 
-Both IR interfaces retain the internal `forge_lifted_<hex RVA>` function through optimization. Its state pointer requires four-byte alignment and addresses seven 64-bit slots in this order — RAX, RCX, RDX, R8, R9, R10, R11. Reads use their incoming values. Writes update those slots. Condition flags are local to each lifted invocation and start undefined. Plain `ret` ends the isolated call. Guest stack state, return addresses, and flags across calls are outside this interface.
+Both IR interfaces retain the internal `forge_lifted_<hex RVA>(ptr)` function through optimization. Its four-byte-aligned state pointer addresses exactly seven 64-bit slots in order — RAX, RCX, RDX, R8, R9, R10, R11. Signatureless callers supply their incoming values and observe writes in place. The other nine register parents and condition flags are local to each invocation. RSP starts at the guest stack entry address. Other local registers and flags start undefined.
 
 The sole supported signature adds `extern "C" int64_t forge_lifted(int64_t, int64_t)`. The caller declares this contract. The wrapper places its native arguments in the RCX and RDX slots, calls the lifted body, and returns RAX. On every incoming path, a read requires the bits it observes to be defined. Returning requires all 64 bits of RAX. Forge verifies the module, writes and closes a sibling temporary file, then publishes it with one rename. A failed lift preserves an existing output file.
 
 | Supported x86-64 forms | Semantics |
 | --- | --- |
-| MOV, MOVZX, MOVSX, MOVSXD | Register views share their 64-bit parent. Byte and word writes preserve the other bits, including writes to AH, CH and DH. Doubleword writes clear the upper half. Extension instructions read the encoded source width. |
+| MOV, MOVZX, MOVSX, MOVSXD | Register views share their 64-bit parent. Byte and word writes preserve the other bits, including writes to AH, BH, CH and DH. All sixteen GPRs have low-byte, word, doubleword and quadword views. Doubleword writes clear the upper half. Extension instructions read the encoded source width. MOV can also load or store stack bytes, words, doublewords and quadwords, including immediate stores. A quadword immediate store sign-extends its encoded 32-bit immediate. MOVZX and MOVSX accept supported memory sources. MOVSXD loads a doubleword into a 32- or 64-bit destination. The 32-bit form clears the upper half of its parent. The 16-bit destination form is unsupported. |
 | ADD, ADC, SUB, SBB, CMP, INC, DEC, NEG | Arithmetic wraps at 8, 16, 32 or 64 bits. CF represents unsigned carry or borrow, OF signed overflow, and AF carry or borrow between bits 3 and 4. INC and DEC preserve CF. CMP only updates flags. Comparing a scratch register with itself sets ZF and PF and clears CF, SF, OF and AF even on first use. SBB of a register with itself produces zero or all ones according to incoming CF. Both idioms require identical register views. |
 | AND, OR, XOR, TEST, NOT | Logical results define ZF, SF and even low-byte parity, clear CF and OF, and leave AF undefined. TEST only updates flags. NOT preserves all flags. Same-register XOR and SUB can define zero even on first use of a scratch register. |
 | Two-register IMUL | At 16, 32 and 64 bits the low product is stored. CF and OF indicate whether the signed product fits. The other four flags become undefined. |
@@ -237,7 +237,17 @@ Register slots carry values along the path that executes. A backedge to the firs
 
 Flags follow the same all-path rule. LLVM flag PHIs receive one value per incoming edge, including both edges when a conditional jump targets its own fallthrough. A CL shift can have an effective count of zero, so consuming ZF afterward requires a prior ZF definition. A possible count above one prevents a subsequent SETO, and a possible count at or above the operand width prevents reading CF after an 8- or 16-bit SHL or SHR. A required register or flag that fails the proof produces a lift diagnostic with the consuming instruction’s RVA, opcode and bytes. An overwritten or unused undefined flag is harmless.
 
-The supported operand-size prefix selects verified 16-bit forms. Other legacy prefixes, nonvolatile register parents, guest memory, stack operations, RIP-relative addressing, calls, indirect branches, division, other multiply forms, rotates, and SIMD remain unsupported. Lifting requires an exact discovered start in a PE32+ AMD64 EXE, a file-backed function range of at most 64 KiB, and code bytes free of base relocations. [Intel instruction reference](https://cdrdv2-public.intel.com/671110/325383-sdm-vol-2abcd.pdf)
+The supported operand-size prefix selects verified 16-bit forms. Other legacy prefixes, PUSH/POP/LEAVE, stack arguments, general memory, RIP-relative addressing, calls, indirect branches, division, other multiply forms, rotates, and SIMD remain unsupported. Lifting requires an exact discovered start in a PE32+ AMD64 EXE, a file-backed function range of at most 64 KiB, and code bytes free of base relocations. [Intel instruction reference](https://cdrdv2-public.intel.com/671110/325383-sdm-vol-2abcd.pdf)
+
+### Guest stack memory
+
+Each isolated call starts with a downward-growing 4 KiB guest stack in `[0x70000000, 0x70001000)`. Entry RSP is `0x70000fd8` (8 modulo 16). The eight bytes at that address are reserved for the synthetic return slot. The next 32 bytes are the caller-provided shadow space and are available for guest stores. No stack bytes start initialized. The typed wrapper supplies its two arguments in registers.
+
+MOV-family memory operands use 64-bit guest addresses. Base and index must be defined GPRs when present. Index scales are 1, 2, 4 or 8 and displacement is signed. Effective-address arithmetic wraps at 64 bits. LEA computes the integer expression without accessing storage. Absolute-only data addresses, segment overrides, address-size overrides and RIP-relative operands are unsupported.
+
+Each executed load or store must fit entirely in the mapped range and avoid the reserved slot. Unaligned accesses use x86 little-endian byte order. A store initializes exactly its bytes, and a read requires every requested byte to have been written earlier on that execution path. Re-entering a guest block retains its memory. Starting a new invocation resets validity. An access below live RSP uses the same bounds and validity rules. Windows considers this area volatile during asynchronous activity. [Windows x64 stack usage](https://learn.microsoft.com/en-us/cpp/build/stack-usage?view=msvc-170)
+
+Plain RET finishes the isolated invocation and requires RSP to equal its entry value. Bounds, initialization, reserved-slot, and return-RSP violations execute an LLVM trap on the path that reaches them. A successful lift verifies the IR. An input-dependent access can still trap at execution. Guest code cannot inspect a caller return address under this contract. Calls, stack-passed arguments and frame instructions require additional semantics.
 
 ### Lifting interface and targets
 
