@@ -168,7 +168,8 @@ def build(ir, harness, work, config, variant):
     if worker is not None:
         return worker.build(ir, harness, work, config, variant)
     tree = work / "native"
-    args = [f"-DFORGE_DIFFERENTIAL_IR={ir}", f"-DFORGE_DIFFERENTIAL_VARIANT={variant}"]
+    args = [f"-DFORGE_DIFFERENTIAL_IR={ir}", f"-DFORGE_DIFFERENTIAL_VARIANT={variant}",
+            f"-DFORGE_DIFFERENTIAL_HARNESS={harness}"]
     phase("configuration", configure(tree, config, args), work / "compilation.log")
     return build_targets(tree, "differential_" + harness, ir, harness, work, config, variant)
 

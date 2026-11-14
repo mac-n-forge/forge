@@ -21,6 +21,10 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, capture_output=True, timeout=30, **kwargs).stdout
 
 
+def initial_slots(invocation):
+    return [0xabcdef0123456000 + invocation * 0x1000 + i * 0x101 for i in range(7)]
+
+
 class StackTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -108,6 +112,9 @@ class StackTests(unittest.TestCase):
             self.expect(exe, 0, 0, 0xffff12347878ffff)
 
     def test_stack_instructions(self):
+        for name in ("push_rsp_value", "push_rsp_value_modrm"):
+            for exe in self.variants(name):
+                self.expect(exe, 0, 0, RSP)
         for exe in self.variants("push_pop_order"):
             for a, b in [(0, 0), (1, 2), (-3, 17)]:
                 carry = int((a & MASK) < (b & MASK))
@@ -127,6 +134,28 @@ class StackTests(unittest.TestCase):
         for exe in self.variants("frame_loop"):
             for count in (0, 1, 6):
                 self.expect(exe, count, 91, 91 + sum(range(1, count + 1)))
+
+    def test_register_only_save(self):
+        for exe in self.variants("register_save"):
+            self.expect(exe, 21, -9, -9)
+        for exe in self.variants("register_save", state=True):
+            expected = b""
+            for invocation in range(2):
+                slots = initial_slots(invocation)
+                slots[0] = slots[2]
+                slots[5] = 0
+                expected += struct.pack("<I7QI", 0x01234567, *slots, 0x89abcdef)
+            self.assertEqual(run(exe), expected)
+        for exe in self.variants("opaque_scratch"):
+            self.expect(exe, 21, -9, -9)
+        for exe in self.variants("opaque_scratch", state=True):
+            self.trap(exe, [(21, -9)])
+        for exe in self.variants("opaque_arithmetic"):
+            self.trap(exe, [(21, -9)])
+        # Even signatureless calls require every output byte of RAX to be concrete.
+        for state in (False, True):
+            for exe in self.variants("partial_opaque_return", state=state):
+                self.trap(exe, [(21, -9)])
 
     def test_nonvolatile_restoration(self):
         for exe in self.variants("save_all_nonvolatiles"):
@@ -165,7 +194,7 @@ class StackTests(unittest.TestCase):
             for exe in self.variants(name, state=True):
                 expected = b""
                 for invocation in range(2):
-                    slots = [0xabcdef0123456000 + invocation * 0x1000 + i * 0x101 for i in range(7)]
+                    slots = initial_slots(invocation)
                     if parent == "high_bytes":
                         slots[6] = ((slots[2] >> 8 & 255) << 8) | (slots[1] >> 8 & 255)
                         slots[0] = 0x76540010 | (slots[0] & 0xff00)

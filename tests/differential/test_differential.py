@@ -48,9 +48,10 @@ class ComparisonTests(unittest.TestCase):
         args = ["0", "0", "0", "7"]
         wanted = Observation(0, b"0\n-7\n", b"")
         for stdout, operands in ((b"1\n-7\n", args[:2]), (b"0\n", args[2:]), (b"0\n-7\n0\n", None)):
-            with self.subTest(stdout=stdout):
-                mismatch, = diff.native_differences(wanted, Observation(0, stdout, b""), "decimal_pairs", args)
-                self.assertEqual(mismatch.get("operands"), operands)
+            for harness in ("decimal_pairs", "calculate_pairs"):
+                with self.subTest(harness=harness, stdout=stdout):
+                    mismatch, = diff.native_differences(wanted, Observation(0, stdout, b""), harness, args)
+                    self.assertEqual(mismatch.get("operands"), operands)
 
 
 class ArtifactSetup(unittest.TestCase):

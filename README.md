@@ -251,7 +251,7 @@ Each executed load or store must fit entirely in the mapped range and avoid the 
 
 Plain RET finishes the isolated invocation. Both interfaces check entry RSP and the protected return marker when guest instructions can affect stack state. The typed Windows wrapper also checks the entry value of each modified nonvolatile GPR (RBX, RBP, RSI, RDI, R12–R15). A signatureless invocation may clobber those private registers. A failing runtime check traps on the executed path. Unsupported return forms fail during lifting. Calls, nested frames, stack-passed arguments, and unwinding remain outside the isolated entry contract.
 
-A callee can save an incoming nonvolatile with PUSH or a stack store, use the register for locals, and restore it with POP or a load. Copies carry byte identities, so swapping two saves or overwriting one byte with a literal fails the typed return check even if the backing bits happen to match. Guest code can access all four shadow slots after initializing them. [Windows x64 calling convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention)
+A callee can save an incoming nonvolatile on the stack or in another GPR, use the original register for locals, and copy the saved value back. For example, R10 may hold RBX during a typed invocation. A signatureless call must overwrite that opaque R10 value before returning its seven observable slots. Copies carry byte identities, so swapping two saves or overwriting one byte with a literal fails the typed return check even if the backing bits happen to match. Guest code can access all four shadow slots after initializing them. [Windows x64 calling convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention)
 
 ### Lifting interface and targets
 

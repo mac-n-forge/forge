@@ -212,6 +212,21 @@ FRAME_LOCALS = {
 }
 
 
+def frame_slots(body, opcode, width, base, *, store=False):
+    """Collect displacements of direct frame operands in the linked Intel listing."""
+    slots = set()
+    for text in body:
+        mnemonic, _, operands = text.partition(" ")
+        if mnemonic != opcode:
+            continue
+        dest, _, src = operands.partition(",")
+        operand = dest if store else src
+        match = re.fullmatch(rf"{width} PTR \[{base}([+-]0x[0-9a-f]+)?\]", operand)
+        if match:
+            slots.add(int(match[1] or "0", 16))
+    return slots
+
+
 def check_frame(name, instructions, config):
     graph = reachable_leaf(instructions)
     body = [instructions[address] for address in sorted(graph)]
@@ -226,11 +241,29 @@ def check_frame(name, instructions, config):
     for witness in witnesses:
         if not any(text.startswith(witness) for text in body):
             raise ValueError(f"missing reachable {witness!r}")
-    loops, predecessors = natural_loops(graph)
-    if name == "count_locals" and not any(
-            any(instructions[a].startswith("mov QWORD PTR [") for a in loop) for loop in loops.values()):
+    if name == "calculate" and config == "release":
+        stores = frame_slots(body, "mov", "QWORD", "rsp", store=True)
+        loads = frame_slots(body, "mov", "QWORD", "rsp")
+        if not {0, 8, 16} <= stores & loads or not any(text.startswith("imul ") for text in body):
+            raise ValueError("expected stores and reloads of three array slots and a multiply")
+    if name == "branch_locals" and config == "release":
+        if body.count("ret") != 2:
+            raise ValueError("expected two reachable returns")
+        for width, opcode in (("BYTE", "movzx"), ("WORD", "movsx"), ("DWORD", "movsxd")):
+            stores = frame_slots(body, "mov", width, "rsp", store=True)
+            if not stores & frame_slots(body, opcode, width, "rsp"):
+                raise ValueError(f"missing {opcode} reload of a stored {width} local")
+    if name == "count_locals":
+        loops, _ = natural_loops(graph)
+        base = "rbp" if config == "debug" else "rsp"
+        for loop in loops.values():
+            loop_body = [instructions[a] for a in loop]
+            loads = frame_slots(loop_body, "mov", "QWORD", base)
+            if loads & frame_slots(loop_body, "mov", "QWORD", base, store=True):
+                return
         raise ValueError("missing loop with stack-resident accumulator")
     if name == "branch_locals" and config == "debug":
+        _, predecessors = natural_loops(graph)
         epilogue = next(a for a in graph if instructions[a].startswith("add rsp,"))
         if len(predecessors[epilogue]) < 3:
             raise ValueError("missing three return paths into the shared epilogue")

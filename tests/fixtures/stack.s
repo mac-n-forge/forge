@@ -170,6 +170,18 @@ probe push_pop_order
     ret
     .seh_endproc
 
+probe push_rsp_value
+    pushq %rsp
+    popq %rax
+    ret
+    .seh_endproc
+
+probe push_rsp_value_modrm
+    .byte 0xff, 0xf4   # push rsp (FF /6)
+    popq %rax
+    ret
+    .seh_endproc
+
 probe rsp_pop_destination
     movq %rsp, %r8
     subq $32, %rsp
@@ -205,6 +217,33 @@ probe saved_registers
     movq %rbx, %rax
     movq 8(%rsp,%rcx), %rbx
     popq %r12
+    ret
+    .seh_endproc
+
+probe register_save
+    movq %rbx, %r10
+    movq %rcx, %rbx
+    movq %r10, %rbx
+    xorl %r10d, %r10d
+    movq %rdx, %rax
+    ret
+    .seh_endproc
+
+probe opaque_scratch
+    movq %rbx, %r10
+    movq %rdx, %rax
+    ret
+    .seh_endproc
+
+probe opaque_arithmetic
+    movq %rbx, %rax
+    addq %rdx, %rax
+    ret
+    .seh_endproc
+
+probe partial_opaque_return
+    movb $1, %r13b
+    movq %r13, %rax
     ret
     .seh_endproc
 

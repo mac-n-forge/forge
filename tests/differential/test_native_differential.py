@@ -3,12 +3,14 @@ import argparse
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import differential as diff
+from calculate_driver_cases import CASES as CALCULATE_INPUTS
 
 CASE = "arithmetic/add_i64"
 WEIGHTED = "arithmetic/weighted_pair_i64"
@@ -21,6 +23,19 @@ class NativeDifferentialTests(unittest.TestCase):
     def setUp(self):
         self.tmp = diff.BUILD / "tmp"
         self.tmp.mkdir(parents=True, exist_ok=True)
+
+    def test_calculate_driver(self):
+        fixture = "frames/calculate"
+        with tempfile.TemporaryDirectory(dir=self.tmp) as tmp:
+            output = Path(tmp)
+            for config in diff.CONFIGS:
+                self.assertEqual(diff.run(config, fixture, output=output, forge=self.forge), 0)
+                for variant in diff.VARIANTS:
+                    exe = output / config / fixture / variant / "native/bin/differential_calculate_pairs"
+                    for args, status, stdout in CALCULATE_INPUTS:
+                        with self.subTest(config=config, variant=variant, args=args):
+                            result = subprocess.run([exe, *args], capture_output=True, timeout=10)
+                            self.assertEqual((result.returncode, result.stdout, result.stderr), (status, stdout, b""))
 
     def negative(self, name, category, *, fixture=CASE, binaries=diff.BINARIES):
         output = OUTPUT / name

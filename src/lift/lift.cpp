@@ -482,13 +482,15 @@ namespace forge {
 
             RegisterView dest{};
             if (auto instruction = x86::integerInstruction(s.opcode)) {
-                if (instruction->form == x86::Form::Store) {
-                    accessesMemory = true;
+                if (instruction->op == x86::Op::Mov && (instruction->form == x86::Form::Pair ||
+                                                        instruction->form == x86::Form::Store)) {
                     const auto &src = s.inst.getOperand(s.inst.getNumOperands() - 1);
-
                     tracksOrigins |=
                         src.isReg() && nonvolatile(reg(s, src, instruction->width).index);
+                }
 
+                if (instruction->form == x86::Form::Store) {
+                    accessesMemory = true;
                     return;
                 }
 
@@ -534,7 +536,7 @@ namespace forge {
                 // use read(), which requires concrete bytes.
                 auto source = form == Form::Load
                                   ? stack.loadSaved(effectiveAddress(s, 1, true), width)
-                                  : readSaved(s, reg(s, last, width), nonvolatile(dest.index));
+                                  : readSaved(s, reg(s, last, width), true);
                 writeSaved(dest, source);
                 return;
             }

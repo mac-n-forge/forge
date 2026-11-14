@@ -456,7 +456,7 @@ class Lift(Case):
                 ("48 a1 00 00 00 70 00 00 00 00 c3", "LIFT_UNSUPPORTED_INSTRUCTION"),
                 ("48 8b 04 9c c3", "LIFT_UNDEFINED_REGISTER"),
                 ("b7 ff 48 8b 03 c3", "LIFT_UNDEFINED_REGISTER"),
-                ("41 b5 01 4c 89 e8 c3", "LIFT_UNDEFINED_REGISTER")):
+                ("41 b2 01 4c 89 d0 c3", "LIFT_UNDEFINED_REGISTER")):  # R10B alone cannot define R10
             with self.subTest(code=code):
                 lift(code, failure)
 

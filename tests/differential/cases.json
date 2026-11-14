@@ -257,7 +257,7 @@
     "scope": "function",
     "export": "calculate",
     "signature": "i64(i64,i64)",
-    "harness": "decimal_pairs"
+    "harness": "calculate_pairs"
   },
   {
     "fixture_id": "frames/branch_locals",
