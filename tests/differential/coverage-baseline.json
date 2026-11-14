@@ -350,6 +350,36 @@
       "id": "memory/loop",
       "config": "release",
       "target": "macos-arm64"
+    },
+    {
+      "id": "frames/calculate",
+      "config": "debug",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "frames/calculate",
+      "config": "release",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "frames/branch_locals",
+      "config": "debug",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "frames/branch_locals",
+      "config": "release",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "frames/count_locals",
+      "config": "debug",
+      "target": "macos-arm64"
+    },
+    {
+      "id": "frames/count_locals",
+      "config": "release",
+      "target": "macos-arm64"
     }
   ]
 }

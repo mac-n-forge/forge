@@ -3,7 +3,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from build import check_leaf, check_nested_exits, leaf_instructions
+from build import check_frame, check_leaf, check_nested_exits, leaf_instructions
 
 
 # Both loops are laid out after a shared return. Absolute addresses are immaterial.
@@ -30,6 +30,29 @@ class FixtureShapeTests(unittest.TestCase):
     def reject(self, listing):
         with self.assertRaisesRegex(ValueError, "nested natural loops"):
             self.check(listing)
+
+    def test_frame_loop_must_store_inside_a_reachable_loop(self):
+        instructions = dict(enumerate([
+            "push rbp", "mov rbp,rsp", "sub rsp,0x10", "mov QWORD PTR [rbp-0x10],rdx",
+            "mov QWORD PTR [rbp-0x10],rax", "add DWORD PTR [rbp-0x4],0x1",
+            "cmp eax,DWORD PTR [rbp-0x8]", "jb 4", "add rsp,0x10", "pop rbp", "ret"]))
+        check_frame("count_locals", instructions, "debug")
+        instructions[7] = "jb 5"
+        with self.assertRaisesRegex(ValueError, "stack-resident accumulator"):
+            check_frame("count_locals", instructions, "debug")
+        instructions[0] = "nop"
+        with self.assertRaisesRegex(ValueError, "RBP frame"):
+            check_frame("count_locals", instructions, "debug")
+
+    def test_frame_branch_has_three_reachable_epilogue_paths(self):
+        instructions = dict(enumerate([
+            "push rbp", "mov rbp,rsp", "sub rsp,0x10", "mov BYTE PTR [rbp-1],al",
+            "mov WORD PTR [rbp-4],dx", "mov DWORD PTR [rbp-8],eax", "cdqe",
+            "js a", "je b", "jmp c", "jmp c", "jmp c", "add rsp,0x10", "pop rbp", "ret"]))
+        check_frame("branch_locals", instructions, "debug")
+        instructions[8] = "je a"
+        with self.assertRaisesRegex(ValueError, "three return paths"):
+            check_frame("branch_locals", instructions, "debug")
 
     def test_nested_after_first_return(self):
         self.check(NESTED)

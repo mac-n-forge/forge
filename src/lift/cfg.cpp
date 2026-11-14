@@ -46,7 +46,8 @@ namespace forge::x86 {
             if (encoding.front() == 0x66) {
                 auto instruction = x86::integerInstruction(s.opcode);
 
-                if ((!instruction || instruction->width != 16) && s.opcode != "CMOV16rr") {
+                if ((!instruction || instruction->width != 16) && s.opcode != "CMOV16rr" &&
+                    s.opcode != "NOOPW") {
                     s.reject(FailureCode::UnsupportedPrefix, "unsupported instruction prefix");
                 }
 

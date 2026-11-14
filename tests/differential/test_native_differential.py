@@ -51,9 +51,9 @@ class NativeDifferentialTests(unittest.TestCase):
             image.write_bytes(data)
             entry = diff.analyze(self.forge, image, "add_i64", work)
             length = entry.end - entry.start
-            # PUSH RAX, RET and padding preserve every PE table and the discovered extent.
-            self.assertGreaterEqual(length, 2)
-            data[entry.file_offset:entry.file_offset + length] = b"\x50\xc3".ljust(length, b"\xcc")
+            # PUSH [RCX], RET and padding preserve every PE table and the discovered extent.
+            self.assertGreaterEqual(length, 3)
+            data[entry.file_offset:entry.file_offset + length] = b"\xff\x31\xc3".ljust(length, b"\xcc")
             image.write_bytes(data)
             selected = diff.analyze(self.forge, image, "add_i64", work)
             ir = work / diff.CANONICAL_IR
@@ -62,7 +62,7 @@ class NativeDifferentialTests(unittest.TestCase):
                 diff.lift(self.forge, image, {"signature": "i64(i64,i64)"}, selected, ir)
             failure = diff.read_json(work / "lifting.log")
             self.assertEqual((failure["context"]["instruction_rva"], failure["context"]["file_offset"],
-                              failure["context"]["bytes"]), (hex(selected.start), entry.file_offset, "50"))
+                              failure["context"]["bytes"]), (hex(selected.start), entry.file_offset, "ff31"))
             self.assertFalse(ir.exists())
 
     def test_changed_return(self):

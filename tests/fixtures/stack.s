@@ -147,3 +147,212 @@ probe store_immediates
     movq 8(%rsp), %rax
     ret
     .seh_endproc
+
+# The alternate FF /6 and 8F /0 register encodings also exercise ordering
+# when the destination of POP is RSP itself.
+probe push_pop_order
+    pushq %rbp
+    movq %rsp, %rbp
+    cmpq %rdx, %rcx
+    .byte 0xff, 0xf4   # push rsp
+    pushq %rcx
+    .byte 0x8f, 0xc0   # pop rax
+    popq %rsp
+    pushq $-128
+    popq %r9
+    pushq $-2147483648
+    popq %r10
+    movq (%rbp), %r11
+    movq %r11, (%rbp)
+    leave
+    adcq %r9, %rax
+    addq %r10, %rax
+    ret
+    .seh_endproc
+
+probe rsp_pop_destination
+    movq %rsp, %r8
+    subq $32, %rsp
+    pushq %r8
+    .byte 0x8f, 0xc4   # pop rsp: the value from the stack wins
+    movq %rcx, %rax
+    ret
+    .seh_endproc
+
+probe frame_layout
+    movq %rsp, %r8
+    andl $15, %r8d
+    pushq %rbp
+    movq %rsp, %rbp
+    movq %rbp, %rax
+    andl $15, %eax
+    addq %r8, %rax
+    movq %rcx, 16(%rbp)
+    movq %rdx, 40(%rbp)
+    movq 16(%rbp), %r8
+    movq 40(%rbp), %r9
+    addq %r8, %rax
+    subq %r9, %rax
+    leave
+    ret
+    .seh_endproc
+
+probe saved_registers
+    pushq %r12
+    movq %r13, %r12
+    movq %rbx, 8(%rsp,%rcx)   # rcx=8 selects the first home slot
+    movq %rdx, %rbx
+    movq %rbx, %rax
+    movq 8(%rsp,%rcx), %rbx
+    popq %r12
+    ret
+    .seh_endproc
+
+probe swapped_saves
+    pushq %rsi
+    pushq %rdi
+    popq %rsi
+    popq %rdi
+    movq %rcx, %rax
+    ret
+    .seh_endproc
+
+probe corrupt_save
+    pushq %rbp
+    movb $0, (%rsp,%rcx)
+    popq %rbp
+    movq %rdx, %rax
+    ret
+    .seh_endproc
+
+probe reordered_save
+    pushq %rbp
+    movb 1(%rsp), %al
+    movb %al, (%rsp)
+    popq %rbp
+    movq %rdx, %rax
+    ret
+    .seh_endproc
+
+probe early_clobber
+    pushq %rbx
+    xorl %ebx, %ebx
+    testq %rcx, %rcx
+    je 1f
+    popq %rbx
+    jmp 2f
+1:
+    addq $8, %rsp
+2:
+    movq %rdx, %rax
+    ret
+    .seh_endproc
+
+probe leak_return
+    pushq %rbp
+    movq (%rsp), %rax
+    popq %rbp
+    ret
+    .seh_endproc
+
+probe leak_address
+    pushq %rbp
+    popq %r8
+    movq (%r8), %rax
+    ret
+    .seh_endproc
+
+probe frame_loop
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $16, %rsp
+    movq %rdx, -8(%rbp)
+    andl $7, %ecx
+    je 2f
+1:
+    subq %rcx, %rsp
+    movq -8(%rbp), %rax
+    addq %rcx, %rax
+    movq %rax, -8(%rbp)
+    decl %ecx
+    jne 1b
+2:
+    movq -8(%rbp), %rax
+    leave
+    ret
+    .seh_endproc
+
+probe pop_uninitialized
+    subq $8, %rsp
+    popq %rax
+    ret
+    .seh_endproc
+
+probe bad_teardown
+    pushq %rcx
+    movq %rcx, %rax
+    ret
+    .seh_endproc
+
+probe reserved_pop
+    popq %rax
+    pushq %rax
+    ret
+    .seh_endproc
+
+probe push_boundary
+    movq %rsp, %r8
+    movq %rcx, %rsp
+    pushq %rdx
+    movq (%rsp), %rax
+    popq %rdx
+    movq %r8, %rsp
+    ret
+    .seh_endproc
+
+probe save_all_nonvolatiles
+    pushq %rbx
+    pushq %rbp
+    pushq %rsi
+    pushq %rdi
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    movq %rcx, %rbx
+    movq %rcx, %rbp
+    movq %rcx, %rsi
+    movq %rcx, %rdi
+    movq %rcx, %r12
+    movq %rcx, %r13
+    movq %rcx, %r14
+    movq %rcx, %r15
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rdi
+    popq %rsi
+    popq %rbp
+    popq %rbx
+    movq %rdx, %rax
+    ret
+    .seh_endproc
+
+probe read_modify_uninitialized
+    subq $8, %rsp
+    movw %cx, (%rsp)
+    addl $1, (%rsp)
+    movl (%rsp), %eax
+    addq $8, %rsp
+    ret
+    .seh_endproc
+
+probe implicit_extensions
+    movq %rcx, %rax
+    cmpq %rdx, %rcx
+    cwde
+    cdqe
+    adcq $0, %rax
+    ret
+    .seh_endproc

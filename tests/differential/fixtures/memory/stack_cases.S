@@ -46,31 +46,25 @@ stack_leaf overlap
     ret
     .seh_endproc
 
-# Only the outer Windows entry saves the native caller's nonvolatile RBP.
-.globl stack_indexed_driver
-.seh_proc stack_indexed_driver
-stack_indexed_driver:
+.globl stack_indexed
+.seh_proc stack_indexed
+stack_indexed:
     pushq %rbp
     .seh_pushreg %rbp
-    subq $32, %rsp
-    .seh_stackalloc 32
     .seh_endprologue
-    call stack_indexed
-    addq $32, %rsp
-    popq %rbp
-    ret
-    .seh_endproc
-
-stack_leaf indexed
-    movl $0x11223344, 8(%rsp)
-    movl $0x80000001, 12(%rsp)
-    movl %edx, 16(%rsp)
-    movl $0xfedcba98, 20(%rsp)
-    leaq 24(%rsp), %rbp
+    .section .drectve
+    .ascii " -export:stack_indexed"
+    .text
+    movl $0x11223344, 16(%rsp)
+    movl $0x80000001, 20(%rsp)
+    movl %edx, 24(%rsp)
+    movl $0xfedcba98, 28(%rsp)
+    leaq 32(%rsp), %rbp
     andl $3, %ecx
     movq $-1, %rax
     # MOVSXD EAX, dword ptr [RBP + RCX*4 - 16], opcode 63 without REX.W.
     .byte 0x63, 0x44, 0x8d, 0xf0
+    popq %rbp
     ret
     .seh_endproc
 
