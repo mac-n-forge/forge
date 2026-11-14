@@ -125,6 +125,17 @@ namespace {
             }
         }
 
+        for (const auto &[opcode, form] : {std::pair{"CMP32rm", Form::Load},
+                                           {"CMP64mi8", Form::MemoryImmediate},
+                                           {"ADD32mi8", Form::MemoryImmediate}}) {
+            auto instruction = integerInstruction(opcode);
+
+            if (!instruction || instruction->form != form ||
+                !flagEffect(instruction->op, instruction->width).generated.all()) {
+                throw std::runtime_error(std::string("incorrect arithmetic memory form ") + opcode);
+            }
+        }
+
         for (StringRef opcode :
              {"ADD64rm", "MOVZX64rm32", "MOVSX16rm16", "MOVSX16rm32", "MOV64mi", "MOV8ao64"}) {
             if (integerInstruction(opcode)) {

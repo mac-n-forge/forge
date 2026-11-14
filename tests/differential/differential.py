@@ -169,7 +169,7 @@ def lift(forge, image, case, selected, ir):
 def native_differences(wanted, actual, harness, args):
     mismatches = differences(wanted, actual)
     for mismatch in mismatches:
-        if harness == "decimal_pairs" and mismatch["field"] == "stdout":
+        if harness in ("decimal_pairs", "calculate_pairs") and mismatch["field"] == "stdout":
             offset = mismatch["offset"]
             first = 2 * wanted.stdout.count(b"\n", 0, offset)
             if offset < len(wanted.stdout) and first + 1 < len(args):

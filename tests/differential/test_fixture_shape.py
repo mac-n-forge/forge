@@ -1,9 +1,9 @@
-"""Control-flow witnesses for the linked MinGW nested-loop leaf."""
+"""Instruction and control-flow witnesses for the linked MinGW fixtures."""
 from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from build import check_leaf, check_nested_exits, leaf_instructions
+from build import check_frame, check_leaf, check_nested_exits, leaf_instructions
 
 
 # Both loops are laid out after a shared return. Absolute addresses are immaterial.
@@ -31,8 +31,67 @@ class FixtureShapeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "nested natural loops"):
             self.check(listing)
 
+    def test_frame_loop_must_store_inside_a_reachable_loop(self):
+        instructions = dict(enumerate([
+            "push rbp", "mov rbp,rsp", "sub rsp,0x10", "mov QWORD PTR [rbp-0x10],rdx",
+            "mov rax,QWORD PTR [rbp-0x10]", "mov QWORD PTR [rbp-0x10],rax", "add DWORD PTR [rbp-0x4],0x1",
+            "cmp eax,DWORD PTR [rbp-0x8]", "jb 4", "add rsp,0x10", "pop rbp", "ret"]))
+        check_frame("count_locals", instructions, "debug")
+        instructions[8] = "jb 6"
+        with self.assertRaisesRegex(ValueError, "stack-resident accumulator"):
+            check_frame("count_locals", instructions, "debug")
+        instructions[0] = "nop"
+        with self.assertRaisesRegex(ValueError, "RBP frame"):
+            check_frame("count_locals", instructions, "debug")
+
+    def test_frame_branch_has_three_reachable_epilogue_paths(self):
+        instructions = dict(enumerate([
+            "push rbp", "mov rbp,rsp", "sub rsp,0x10", "mov BYTE PTR [rbp-1],al",
+            "mov WORD PTR [rbp-4],dx", "mov DWORD PTR [rbp-8],eax", "cdqe",
+            "js a", "je b", "jmp c", "jmp c", "jmp c", "add rsp,0x10", "pop rbp", "ret"]))
+        check_frame("branch_locals", instructions, "debug")
+        instructions[8] = "je a"
+        with self.assertRaisesRegex(ValueError, "three return paths"):
+            check_frame("branch_locals", instructions, "debug")
+
     def test_nested_after_first_return(self):
         self.check(NESTED)
+
+    def test_release_calculate_requires_all_array_slots_and_multiply(self):
+        def check(body):
+            check_frame("calculate", dict(enumerate(["sub rsp,0x28", *body, "add rsp,0x28", "ret"])), "release")
+
+        body = ["mov QWORD PTR [rsp+0x8],rax", "mov QWORD PTR [rsp],r9", "mov QWORD PTR [rsp+0x10],rdx",
+                "mov r10,QWORD PTR [rsp+0x10]", "mov rdx,QWORD PTR [rsp]", "mov r8,QWORD PTR [rsp+0x8]",
+                "imul rdx,r8"]
+        check(body)
+        for incomplete in ([*body[:3], *body[4:]], body[1:], body[:-1],
+                           ["mov rax,rcx", "imul rax,rdx", "add rax,rcx", "add rax,rdx"]):
+            with self.subTest(body=incomplete), self.assertRaisesRegex(ValueError, "array slots"):
+                check(incomplete)
+
+    def test_release_branch_requires_reachable_returns_and_matching_loads(self):
+        body = ["sub rsp,0x18", "mov BYTE PTR [rsp+0x9],al", "mov WORD PTR [rsp+0xa],dx",
+                "mov DWORD PTR [rsp+0xc],r8d", "movsx r9d,WORD PTR [rsp+0xa]", "movzx eax,BYTE PTR [rsp+0x9]",
+                "movsxd r11,DWORD PTR [rsp+0xc]", "js a", "add rsp,0x18", "ret", "add rsp,0x18", "ret"]
+        check_frame("branch_locals", dict(enumerate(body)), "release")
+        for index, replacement, reason in ((7, "jmp a", "two reachable returns"), (4, "mov eax,edx", "movsx"),
+                                           (5, "movzx eax,BYTE PTR [rsp+0x8]", "movzx"),
+                                           (3, "mov r8d,edx", "movsxd")):
+            instructions = dict(enumerate(body))
+            instructions[index] = replacement
+            with self.subTest(replacement=replacement), self.assertRaisesRegex(ValueError, reason):
+                check_frame("branch_locals", instructions, "release")
+
+    def test_release_loop_requires_load_and_store_of_one_rsp_slot_inside_loop(self):
+        body = ["sub rsp,0x18", "mov QWORD PTR [rsp+0x8],rdx", "mov r8,QWORD PTR [rsp+0x8]",
+                "add r8,rax", "mov QWORD PTR [rsp+0x8],r8", "jne 2", "add rsp,0x18", "ret"]
+        check_frame("count_locals", dict(enumerate(body)), "release")
+        for changed in ([s.replace("rsp+0x8", "rcx") for s in body],
+                        [*body[:4], "mov QWORD PTR [rsp+0x10],r8", *body[5:]],
+                        [*body[:4], "jne 2", body[4], *body[6:]]):
+            with self.subTest(body=changed), self.assertRaisesRegex(ValueError, "stack-resident accumulator"):
+                check_frame("count_locals", dict(enumerate(changed)), "release")
 
     def test_former_nested_exits(self):
         # Control transfers of the previous compiled fixture, at offsets from its export.

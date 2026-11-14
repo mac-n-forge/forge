@@ -251,5 +251,26 @@
     "export": "stack_loop",
     "signature": "i64(i64,i64)",
     "harness": "decimal_pairs"
+  },
+  {
+    "fixture_id": "frames/calculate",
+    "scope": "function",
+    "export": "calculate",
+    "signature": "i64(i64,i64)",
+    "harness": "calculate_pairs"
+  },
+  {
+    "fixture_id": "frames/branch_locals",
+    "scope": "function",
+    "export": "branch_locals",
+    "signature": "i64(i64,i64)",
+    "harness": "decimal_pairs"
+  },
+  {
+    "fixture_id": "frames/count_locals",
+    "scope": "function",
+    "export": "count_locals",
+    "signature": "i64(i64,i64)",
+    "harness": "decimal_pairs"
   }
 ]

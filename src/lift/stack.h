@@ -5,6 +5,13 @@
 #include <cstdint>
 
 namespace forge::x86 {
+    // Each byte has a mark: zero for uninitialized, 0xff for concrete, or an
+    // incoming nonvolatile byte identity. A null marks operand denotes all concrete.
+    struct StoredValue {
+        llvm::Value *bits;
+        llvm::Value *marks = nullptr;
+    };
+
     // IR storage belongs to the lifted function. The builder and its insertion
     // point are shared with instruction lowering, including guard continuations.
     class GuestStack {
@@ -17,8 +24,10 @@ namespace forge::x86 {
 
         void allocate();
         llvm::Value *load(llvm::Value *address, unsigned width);
-        void store(llvm::Value *address, llvm::Value *value);
+        StoredValue loadSaved(llvm::Value *address, unsigned width);
+        void store(llvm::Value *address, StoredValue value);
         void checkReturn(llvm::Value *rsp);
+        void guard(llvm::Value *condition);
 
       private:
         llvm::IRBuilder<> &ir;
@@ -26,7 +35,8 @@ namespace forge::x86 {
         llvm::Value *validity = nullptr;
         llvm::BasicBlock *fault = nullptr;
 
-        void guard(llvm::Value *condition);
         llvm::Value *checkedOffset(llvm::Value *address, unsigned width);
+        StoredValue loadAt(llvm::Value *offset, unsigned width, bool allowOpaque);
+        void storeAt(llvm::Value *offset, StoredValue value);
     };
 } // namespace forge::x86

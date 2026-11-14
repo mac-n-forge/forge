@@ -100,7 +100,11 @@ namespace forge::x86 {
 
         Form form;
 
-        if (op == Op::Shl || op == Op::Shr || op == Op::Sar) {
+        if (opcode == "CMP32rm") {
+            form = Form::Load;
+        } else if (opcode == "CMP64mi8" || opcode == "ADD32mi8") {
+            form = Form::MemoryImmediate;
+        } else if (op == Op::Shl || op == Op::Shr || op == Op::Sar) {
             if (suffix == "r1") {
                 form = Form::ShiftOne;
             } else if (suffix == "ri") {

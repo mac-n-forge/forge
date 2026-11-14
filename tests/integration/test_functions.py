@@ -292,8 +292,8 @@ class Lift(Case):
         unsupported = self.copy("arithmetic.exe", 'encoded "name".exe')
         data = bytearray(unsupported.read_bytes())
         offset = Layout(data).file_offset(0x1000)
-        # The first MOV is accepted. PUSH at the next instruction is unsupported.
-        data[offset:offset + 7] = bytes.fromhex("48 89 c8 50 c3 cc cc")
+        # The first MOV is accepted. Memory-source PUSH at the next instruction is unsupported.
+        data[offset:offset + 7] = bytes.fromhex("48 89 c8 ff 31 c3 cc")
         unsupported.write_bytes(data)
 
         for image, dest, start, expected in (
@@ -320,7 +320,7 @@ class Lift(Case):
                 self.assertEqual((context["input"], context["entry_rva"]), (str(image), start))
                 if image == unsupported:
                     self.assertEqual((context["instruction_rva"], context["end_rva"], context["bytes"]),
-                                     ("0x1003", "0x1007", "50"))
+                                     ("0x1003", "0x1007", "ff31"))
                     self.assertIn("PUSH", context["opcode"])
                 if image.name == "i386.exe":
                     self.assertEqual(context["architecture"], "i386")
@@ -438,10 +438,17 @@ class Lift(Case):
             with self.subTest(code=code):
                 lift(code)
 
+        lift("68 ff ff", "LIFT_INVALID_ENCODING", category="invalid_input")
+
         # The RIZ spelling in a SIB with a redundant scale has no index.
         lift("48 89 4c 64 08 48 8b 44 64 08 c3")
         lift("48 89 e0 c3")
         for code, failure in (
+                ("66 50 c3", "LIFT_UNSUPPORTED_PREFIX"),
+                ("66 c9 c3", "LIFT_UNSUPPORTED_PREFIX"),
+                ("8f 01 c3", "LIFT_UNSUPPORTED_INSTRUCTION"),
+                ("c2 08 00", "LIFT_UNSUPPORTED_CONTROL_FLOW"),
+                ("cb", "LIFT_UNSUPPORTED_CONTROL_FLOW"),
                 ("67 48 8b 01 c3", "LIFT_UNSUPPORTED_PREFIX"),
                 ("65 48 8b 01 c3", "LIFT_UNSUPPORTED_PREFIX"),
                 ("48 8b 05 00 00 00 00 c3", "LIFT_UNSUPPORTED_REGISTER"),
@@ -449,7 +456,7 @@ class Lift(Case):
                 ("48 a1 00 00 00 70 00 00 00 00 c3", "LIFT_UNSUPPORTED_INSTRUCTION"),
                 ("48 8b 04 9c c3", "LIFT_UNDEFINED_REGISTER"),
                 ("b7 ff 48 8b 03 c3", "LIFT_UNDEFINED_REGISTER"),
-                ("41 b5 01 4c 89 e8 c3", "LIFT_UNDEFINED_REGISTER")):
+                ("41 b2 01 4c 89 d0 c3", "LIFT_UNDEFINED_REGISTER")):  # R10B alone cannot define R10
             with self.subTest(code=code):
                 lift(code, failure)
 

@@ -5,10 +5,16 @@
 namespace forge::x86 {
     using namespace llvm;
 
+    namespace {
+        // An isolated invocation owns this token; it never dispatches to a guest PC.
+        constexpr uint64_t returnMarker = 0x4652474552455401ULL;
+    } // namespace
+
     void GuestStack::allocate() {
         bytes = ir.CreateAlloca(ir.getInt8Ty(), ir.getInt32(capacity), "stack.bytes");
         validity = ir.CreateAlloca(ir.getInt8Ty(), ir.getInt32(capacity), "stack.valid");
         ir.CreateMemSet(validity, ir.getInt8(0), capacity, Align(1));
+        storeAt(ir.getInt64(entryRsp - base), {ir.getInt64(returnMarker)});
     }
 
     void GuestStack::guard(Value *condition) {
@@ -39,25 +45,50 @@ namespace forge::x86 {
         return offset;
     }
 
-    Value *GuestStack::load(Value *address, unsigned width) {
-        auto *offset = checkedOffset(address, width);
+    StoredValue GuestStack::loadAt(Value *offset, unsigned width, bool allowOpaque) {
         auto *type = ir.getIntNTy(width);
-        auto *marks = ir.CreateInBoundsGEP(ir.getInt8Ty(), validity, offset);
-        auto *initialized = ir.CreateAlignedLoad(type, marks, Align(1));
-        guard(ir.CreateICmpEQ(initialized, ConstantInt::getAllOnesValue(type)));
+        auto *markPtr = ir.CreateInBoundsGEP(ir.getInt8Ty(), validity, offset);
+        auto *marks = ir.CreateAlignedLoad(type, markPtr, Align(1));
+
+        if (allowOpaque) {
+            auto *byteType = FixedVectorType::get(ir.getInt8Ty(), width / 8);
+            auto *lanes = ir.CreateBitCast(marks, byteType);
+            guard(ir.CreateAndReduce(ir.CreateIsNotNull(lanes)));
+        } else {
+            guard(ir.CreateICmpEQ(marks, ConstantInt::getAllOnesValue(type)));
+        }
 
         auto *data = ir.CreateInBoundsGEP(ir.getInt8Ty(), bytes, offset);
-        return ir.CreateAlignedLoad(type, data, Align(1));
+        return {ir.CreateAlignedLoad(type, data, Align(1)), marks};
     }
 
-    void GuestStack::store(Value *address, Value *value) {
-        auto *type = value->getType();
-        auto *offset = checkedOffset(address, type->getIntegerBitWidth());
+    Value *GuestStack::load(Value *address, unsigned width) {
+        return loadAt(checkedOffset(address, width), width, false).bits;
+    }
+
+    StoredValue GuestStack::loadSaved(Value *address, unsigned width) {
+        return loadAt(checkedOffset(address, width), width, true);
+    }
+
+    void GuestStack::storeAt(Value *offset, StoredValue value) {
         auto *data = ir.CreateInBoundsGEP(ir.getInt8Ty(), bytes, offset);
         auto *marks = ir.CreateInBoundsGEP(ir.getInt8Ty(), validity, offset);
-        ir.CreateAlignedStore(value, data, Align(1));
-        ir.CreateAlignedStore(ConstantInt::getAllOnesValue(type), marks, Align(1));
+        ir.CreateAlignedStore(value.bits, data, Align(1));
+        auto *origin =
+            value.marks ? value.marks : ConstantInt::getAllOnesValue(value.bits->getType());
+        ir.CreateAlignedStore(origin, marks, Align(1));
     }
 
-    void GuestStack::checkReturn(Value *rsp) { guard(ir.CreateICmpEQ(rsp, ir.getInt64(entryRsp))); }
+    void GuestStack::store(Value *address, StoredValue value) {
+        storeAt(checkedOffset(address, value.bits->getType()->getIntegerBitWidth()), value);
+    }
+
+    void GuestStack::checkReturn(Value *rsp) {
+        guard(ir.CreateICmpEQ(rsp, ir.getInt64(entryRsp)));
+
+        if (bytes) {
+            auto marker = loadAt(ir.getInt64(entryRsp - base), 64, false);
+            guard(ir.CreateICmpEQ(marker.bits, ir.getInt64(returnMarker)));
+        }
+    }
 } // namespace forge::x86

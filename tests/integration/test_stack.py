@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import platform
+import re
 import signal
 import struct
 import subprocess
@@ -20,6 +21,10 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, capture_output=True, timeout=30, **kwargs).stdout
 
 
+def initial_slots(invocation):
+    return [0xabcdef0123456000 + invocation * 0x1000 + i * 0x101 for i in range(7)]
+
+
 class StackTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -29,11 +34,20 @@ class StackTests(unittest.TestCase):
         report = json.loads(run(FORGE, "inspect", IMAGE, "--format", "json"))
         cls.exports = {name: int(row["rva"], 16) for row in report["modules"][0]["exports"] for name in row["names"]}
 
-    def variants(self, name, *, state=False):
+    def variants(self, name, *, state=False, corrupt_return=None):
         rva = self.exports[name]
         ir = self.work / f"{name}.ll"
         signature = [] if state else ["--signature", "i64(i64,i64)"]
         run(FORGE, "lift", IMAGE, "--rva", hex(rva), "--output", ir, *signature)
+        if corrupt_return:
+            # Guest instructions cannot write the reserved slot. Corrupt one byte
+            # after synthetic entry to exercise RET's independent integrity check.
+            pattern = rf"^rva_{rva:x}:.*$"
+            injected = (rf"\g<0>\n  %bad.slot = getelementptr i8, ptr %stack.{corrupt_return}, "
+                        f"i64 {RSP - BASE}\n  store i8 0, ptr %bad.slot, align 1")
+            changed, count = re.subn(pattern, injected, ir.read_text(), flags=re.MULTILINE)
+            self.assertEqual(count, 1)
+            ir.write_text(changed)
         if state:
             # A test-local forwarding entry can call the retained internal LLVM symbol.
             with ir.open("a") as out:
@@ -97,6 +111,81 @@ class StackTests(unittest.TestCase):
         for exe in self.variants("store_immediates"):
             self.expect(exe, 0, 0, 0xffff12347878ffff)
 
+    def test_stack_instructions(self):
+        for name in ("push_rsp_value", "push_rsp_value_modrm"):
+            for exe in self.variants(name):
+                self.expect(exe, 0, 0, RSP)
+        for exe in self.variants("push_pop_order"):
+            for a, b in [(0, 0), (1, 2), (-3, 17)]:
+                carry = int((a & MASK) < (b & MASK))
+                self.expect(exe, a, b, a - 128 - (1 << 31) + carry)
+        for exe in self.variants("rsp_pop_destination"):
+            self.expect(exe, -19, 0, -19)
+        for exe in self.variants("frame_layout"):
+            self.expect(exe, 13, 21, 8 + 13 - 21)
+        for exe in self.variants("implicit_extensions"):
+            for a, b in [(0xffff, 0), (0x8000, 0xffff), (0x7fff, 1)]:
+                self.expect(exe, a, b, ((a + 32768) % 65536 - 32768) + int(a < b))
+        for exe in self.variants("push_boundary"):
+            for address in (BASE + 8, RSP, RSP + 16, TOP):
+                self.expect(exe, address, 0x12345678, 0x12345678)
+            for address in (BASE + 7, RSP + 8, TOP + 1, 0):
+                self.trap(exe, [(address, 5)])
+        for exe in self.variants("frame_loop"):
+            for count in (0, 1, 6):
+                self.expect(exe, count, 91, 91 + sum(range(1, count + 1)))
+
+    def test_register_only_save(self):
+        for exe in self.variants("register_save"):
+            self.expect(exe, 21, -9, -9)
+        for exe in self.variants("register_save", state=True):
+            expected = b""
+            for invocation in range(2):
+                slots = initial_slots(invocation)
+                slots[0] = slots[2]
+                slots[5] = 0
+                expected += struct.pack("<I7QI", 0x01234567, *slots, 0x89abcdef)
+            self.assertEqual(run(exe), expected)
+        for exe in self.variants("opaque_scratch"):
+            self.expect(exe, 21, -9, -9)
+        for exe in self.variants("opaque_scratch", state=True):
+            self.trap(exe, [(21, -9)])
+        for exe in self.variants("opaque_arithmetic"):
+            self.trap(exe, [(21, -9)])
+        # Even signatureless calls require every output byte of RAX to be concrete.
+        for state in (False, True):
+            for exe in self.variants("partial_opaque_return", state=state):
+                self.trap(exe, [(21, -9)])
+
+    def test_nonvolatile_restoration(self):
+        for exe in self.variants("save_all_nonvolatiles"):
+            self.expect(exe, 0, -723, -723)
+        for exe in self.variants("saved_registers"):
+            self.expect(exe, 8, -9, -9)
+        for exe in self.variants("early_clobber"):
+            self.expect(exe, 1, -7, -7)
+            self.trap(exe, [(0, 5)])
+        for exe in self.variants("corrupt_save"):
+            for offset in range(8):
+                self.trap(exe, [(offset, 0)])
+        for name in ("swapped_saves", "reordered_save", "leak_return", "leak_address"):
+            for exe in self.variants(name):
+                self.trap(exe, [(0, 0)])
+        for exe in self.variants("swapped_saves", state=True):
+            self.assertEqual(len(run(exe)), 2 * struct.calcsize("<I7QI"))
+
+    def test_stack_faults_in_both_entry_modes(self):
+        for name in ("pop_uninitialized", "bad_teardown", "reserved_pop", "read_modify_uninitialized"):
+            for state in (False, True):
+                for exe in self.variants(name, state=state):
+                    self.trap(exe, [(5, 9)])
+
+    def test_return_slot_integrity(self):
+        for field in ("bytes", "valid"):
+            for state in (False, True):
+                for exe in self.variants("restore_rsp", state=state, corrupt_return=field):
+                    self.trap(exe, [(9, 1)])
+
     def test_register_state(self):
         exposed = ("ax", "cx", "dx", "r8", "r9", "r10", "r11")
         private = ("sp", "bp", "bx", "si", "di", "r12", "r13", "r14", "r15")
@@ -105,7 +194,7 @@ class StackTests(unittest.TestCase):
             for exe in self.variants(name, state=True):
                 expected = b""
                 for invocation in range(2):
-                    slots = [0xabcdef0123456000 + invocation * 0x1000 + i * 0x101 for i in range(7)]
+                    slots = initial_slots(invocation)
                     if parent == "high_bytes":
                         slots[6] = ((slots[2] >> 8 & 255) << 8) | (slots[1] >> 8 & 255)
                         slots[0] = 0x76540010 | (slots[0] & 0xff00)

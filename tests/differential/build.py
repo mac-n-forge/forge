@@ -73,10 +73,10 @@ INTEGER_WITNESSES = {
     "stack_widths": ("mov QWORD PTR [rsp+0x8],", "movsx r10,BYTE PTR", "movsx r8,WORD PTR",
                      "movsxd rdx,DWORD PTR", "mov eax,DWORD PTR"),
     "stack_overlap": ("mov QWORD PTR [rsp+0x9],rcx", "mov WORD PTR [rsp+0xb],dx", "mov eax,DWORD PTR [rsp+0xa]"),
-    "stack_indexed": ("mov DWORD PTR [rsp+0x8],0x11223344", "mov DWORD PTR [rsp+0xc],0x80000001",
-                      "mov DWORD PTR [rsp+0x10],edx", "mov DWORD PTR [rsp+0x14],0xfedcba98",
-                      "lea rbp,[rsp+0x18]", "and ecx,0x3", "mov rax,0xffffffffffffffff",
-                      "movsxd eax,DWORD PTR [rbp+rcx*4-0x10]"),
+    "stack_indexed": ("push rbp", "mov DWORD PTR [rsp+0x10],0x11223344", "mov DWORD PTR [rsp+0x14],0x80000001",
+                      "mov DWORD PTR [rsp+0x18],edx", "mov DWORD PTR [rsp+0x1c],0xfedcba98",
+                      "lea rbp,[rsp+0x20]", "and ecx,0x3", "mov rax,0xffffffffffffffff",
+                      "movsxd eax,DWORD PTR [rbp+rcx*4-0x10]", "pop rbp"),
     "stack_branch": ("jg ", "mov QWORD PTR [rsp+0x8],rdx", "jmp ", "mov QWORD PTR [rsp+0x8],rcx", "adc rax,r10"),
     "stack_loop": ("mov rax,QWORD PTR [rsp+0x10]", "mov QWORD PTR [rsp+0x10],rax", "jne ", "mov rax,QWORD PTR [rsp+0x10]"),
     "integer_mix": ("shl ", "xor ", "imul "),
@@ -106,7 +106,8 @@ def reachable_leaf(instructions):
     conditions = {"jo", "jno", "jb", "jae", "je", "jne", "jbe", "ja", "js", "jns",
                   "jp", "jnp", "jl", "jge", "jle", "jg"}
     ordinary = {"mov", "movabs", "movzx", "movsx", "movsxd", "lea", "add", "sub", "xor",
-                "and", "or", "test", "cmp", "shl", "shr", "sar", "inc", "dec", "not", "neg", "imul"}
+                "and", "or", "test", "cmp", "shl", "shr", "sar", "inc", "dec", "not", "neg", "imul",
+                "push", "pop", "cwde", "cdqe", "nop"}
     addresses = list(instructions)
     following = dict(zip(addresses, addresses[1:]))
     graph = {}
@@ -204,14 +205,80 @@ def check_nested_exits(instructions):
     raise ValueError("expected nested natural loops with inner continuation and early exits at both levels")
 
 
-def check_leaf(path):
+FRAME_LOCALS = {
+    "calculate": ("mov QWORD PTR [rbp-0x20]", "mov QWORD PTR [rbp-0x18]", "mov QWORD PTR [rbp-0x10]", "imul "),
+    "branch_locals": ("mov BYTE PTR [rbp-", "mov WORD PTR [rbp-", "mov DWORD PTR [rbp-", "cdqe"),
+    "count_locals": ("mov QWORD PTR [rbp-", "add DWORD PTR [rbp-", "cmp eax,DWORD PTR [rbp-"),
+}
+
+
+def frame_slots(body, opcode, width, base, *, store=False):
+    """Collect displacements of direct frame operands in the linked Intel listing."""
+    slots = set()
+    for text in body:
+        mnemonic, _, operands = text.partition(" ")
+        if mnemonic != opcode:
+            continue
+        dest, _, src = operands.partition(",")
+        operand = dest if store else src
+        match = re.fullmatch(rf"{width} PTR \[{base}([+-]0x[0-9a-f]+)?\]", operand)
+        if match:
+            slots.add(int(match[1] or "0", 16))
+    return slots
+
+
+def check_frame(name, instructions, config):
+    graph = reachable_leaf(instructions)
+    body = [instructions[address] for address in sorted(graph)]
+    if config == "debug":
+        if body[:2] != ["push rbp", "mov rbp,rsp"] or not body[2].startswith("sub rsp,"):
+            raise ValueError("missing unoptimized RBP frame")
+        witnesses = (*FRAME_LOCALS[name], "add rsp,", "pop rbp", "ret")
+        if body.count("ret") != 1:
+            raise ValueError("expected a shared frame epilogue")
+    else:
+        witnesses = ("sub rsp,", "mov ", "add rsp,", "ret")
+    for witness in witnesses:
+        if not any(text.startswith(witness) for text in body):
+            raise ValueError(f"missing reachable {witness!r}")
+    if name == "calculate" and config == "release":
+        stores = frame_slots(body, "mov", "QWORD", "rsp", store=True)
+        loads = frame_slots(body, "mov", "QWORD", "rsp")
+        if not {0, 8, 16} <= stores & loads or not any(text.startswith("imul ") for text in body):
+            raise ValueError("expected stores and reloads of three array slots and a multiply")
+    if name == "branch_locals" and config == "release":
+        if body.count("ret") != 2:
+            raise ValueError("expected two reachable returns")
+        for width, opcode in (("BYTE", "movzx"), ("WORD", "movsx"), ("DWORD", "movsxd")):
+            stores = frame_slots(body, "mov", width, "rsp", store=True)
+            if not stores & frame_slots(body, opcode, width, "rsp"):
+                raise ValueError(f"missing {opcode} reload of a stored {width} local")
+    if name == "count_locals":
+        loops, _ = natural_loops(graph)
+        base = "rbp" if config == "debug" else "rsp"
+        for loop in loops.values():
+            loop_body = [instructions[a] for a in loop]
+            loads = frame_slots(loop_body, "mov", "QWORD", base)
+            if loads & frame_slots(loop_body, "mov", "QWORD", base, store=True):
+                return
+        raise ValueError("missing loop with stack-resident accumulator")
+    if name == "branch_locals" and config == "debug":
+        _, predecessors = natural_loops(graph)
+        epilogue = next(a for a in graph if instructions[a].startswith("add rsp,"))
+        if len(predecessors[epilogue]) < 3:
+            raise ValueError("missing three return paths into the shared epilogue")
+
+
+def check_leaf(path, config="debug"):
     witnesses = INTEGER_WITNESSES.get(path.stem)
-    if witnesses is None and path.stem != "cfg_nested_exits":
+    if witnesses is None and path.stem != "cfg_nested_exits" and path.stem not in FRAME_LOCALS:
         return
     output = subprocess.check_output(["x86_64-w64-mingw32-objdump", "-d", "--no-show-raw-insn",
                                       "-Mintel", "--disassemble=" + path.stem, path], text=True)
     try:
         instructions = leaf_instructions(output, path.stem)
+        if path.stem in FRAME_LOCALS:
+            check_frame(path.stem, instructions, config)
         if path.stem == "cfg_nested_exits":
             check_nested_exits(instructions)
         if witnesses is not None:
@@ -271,7 +338,7 @@ def build(config, cases, output):
                 other = hashlib.sha256((second / binary).read_bytes()).hexdigest()
                 raise ValueError(f"{config}/{binary}: clean builds differ: {hashlib.sha256(data).hexdigest()} vs {other}")
             inspect_pe(path, fixture_id)
-            check_leaf(path)
+            check_leaf(path, config)
             checksums.append(f"{hashlib.sha256(data).hexdigest()}  {binary}\n")
             shutil.copy2(path, staged / binary)
         (staged / "SHA256SUMS").write_text("".join(checksums), encoding="ascii")

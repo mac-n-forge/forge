@@ -9,9 +9,18 @@ import unittest
 from docker_wine import execute
 from run import BINARIES, REFERENCES, SUITE, load_catalog, reference_environment, sha256
 from artifacts import reference
+from calculate_driver_cases import CASES as CALCULATE_INPUTS
 
 
 class WineTests(unittest.TestCase):
+    def test_calculate_driver(self):
+        image = reference_environment(SUITE)["container_image_id"]
+        for config in ("debug", "release"):
+            for args, status, stdout in CALCULATE_INPUTS:
+                with self.subTest(config=config, args=args):
+                    result = execute(image, BINARIES / config / "calculate.exe", args)
+                    self.assertEqual((result.exit_code, result.stdout, result.stderr), (status, stdout, b""))
+
     def test_complete_matrix(self):
         catalog = load_catalog()
         for config in ("debug", "release"):
